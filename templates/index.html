@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neural Translation Console</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <main class="app-shell">
+        <section class="topbar">
+            <div>
+                <p class="kicker">Seq2Seq LSTM</p>
+                <h1>Neural Translation Console</h1>
+            </div>
+            <div class="topbar-meta">
+                <div class="meta-pill">
+                    <span>Source</span>
+                    <strong>{{ source_lang|upper }}</strong>
+                </div>
+                <div class="meta-pill">
+                    <span>Target</span>
+                    <strong>{{ target_lang|upper }}</strong>
+                </div>
+                <div class="meta-pill">
+                    <span>Status</span>
+                    <strong>{% if ready %}Online{% else %}Offline{% endif %}</strong>
+                </div>
+            </div>
+        </section>
+
+        <section class="dashboard">
+            <aside class="sidebar">
+                <div class="side-card intro-card">
+                    <p class="side-label">System</p>
+                    <h2>English input. Neural decode. {{ target_lang|upper }} output.</h2>
+                    <p>
+                        Run live inference from your trained artifacts with a streamlined workspace built for fast testing.
+                    </p>
+                </div>
+
+                <div class="side-card flow-card">
+                    <p class="side-label">Pipeline</p>
+                    <ul class="flow-list">
+                        <li>Text normalization</li>
+                        <li>Encoder state building</li>
+                        <li>Decoder token generation</li>
+                        <li>Greedy output assembly</li>
+                    </ul>
+                </div>
+
+                {% if supported_examples %}
+                <div class="side-card prompts-card">
+                    <p class="side-label">Quick Inputs</p>
+                    <div class="prompt-grid">
+                        {% for example in supported_examples[:8] %}
+                            <button class="quick-prompt" type="button" data-example="{{ example }}">{{ example }}</button>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </aside>
+
+            <section class="workspace">
+                {% if error %}
+                <div class="banner error-banner">
+                    <strong>Model unavailable.</strong>
+                    <span>{{ error }}</span>
+                </div>
+                {% endif %}
+
+                <div class="console-grid">
+                    <section class="console-panel input-panel">
+                        <div class="panel-bar">
+                            <div>
+                                <p class="panel-label">Input Stream</p>
+                                <h2>English sentence</h2>
+                            </div>
+                            <span class="panel-hint">Ctrl+Enter to run</span>
+                        </div>
+
+                        <label class="sr-only" for="sentence">English sentence</label>
+                        <textarea id="sentence" rows="10" placeholder="Enter a sentence to translate..."></textarea>
+
+                        <div class="action-row">
+                            <button id="translateButton" class="primary-action" {% if not ready %}disabled{% endif %}>Run Translation</button>
+                            <button id="sampleButton" class="ghost-action" type="button">Load Sample</button>
+                        </div>
+                    </section>
+
+                    <section class="console-panel output-panel">
+                        <div class="panel-bar">
+                            <div>
+                                <p class="panel-label">Output Stream</p>
+                                <h2>{{ target_lang|upper }} translation</h2>
+                            </div>
+                            <div id="status" class="status-pill" aria-live="polite">Standby</div>
+                        </div>
+
+                        <div class="output-screen">
+                            <div class="screen-header">
+                                <span>Decoded Response</span>
+                                <span>{{ source_lang|upper }} -> {{ target_lang|upper }}</span>
+                            </div>
+                            <div id="result" class="screen-text">Your translated sentence will appear here.</div>
+                        </div>
+                    </section>
+                </div>
+            </section>
+        </section>
+    </main>
+
+    <script>
+        const translateButton = document.getElementById("translateButton");
+        const sampleButton = document.getElementById("sampleButton");
+        const sentenceInput = document.getElementById("sentence");
+        const result = document.getElementById("result");
+        const status = document.getElementById("status");
+        const prompts = document.querySelectorAll("[data-example]");
+
+        async function translateSentence() {
+            const sentence = sentenceInput.value.trim();
+            if (!sentence) {
+                status.textContent = "Input required";
+                result.textContent = "Enter a sentence before translating.";
+                return;
+            }
+
+            status.textContent = "Running";
+            result.textContent = "Decoding response...";
+
+            try {
+                const response = await fetch("/translate", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ sentence })
+                });
+                const data = await response.json();
+
+                if (!response.ok || !data.ok) {
+                    if (data.mode === "unsupported") {
+                        status.textContent = "Unsupported";
+                        result.textContent = data.error || "This sentence is outside the trained sample set.";
+                        return;
+                    }
+                    throw new Error(data.error || "Translation failed.");
+                }
+
+                if (data.mode === "phrasebook") {
+                    status.textContent = "Exact match";
+                } else if (data.mode === "closest_phrase") {
+                    status.textContent = `Closest match ${Math.round(data.score * 100)}%`;
+                } else if (data.mode === "model") {
+                    status.textContent = "Model output";
+                } else {
+                    status.textContent = "Complete";
+                }
+                result.textContent = data.translation;
+            } catch (error) {
+                status.textContent = "Error";
+                result.textContent = error.message;
+            }
+        }
+
+        translateButton?.addEventListener("click", translateSentence);
+        sampleButton.addEventListener("click", () => {
+            sentenceInput.value = "how are you";
+            status.textContent = "Sample loaded";
+        });
+        prompts.forEach((prompt) => {
+            prompt.addEventListener("click", () => {
+                sentenceInput.value = prompt.dataset.example || "";
+                status.textContent = "Prompt loaded";
+            });
+        });
+        sentenceInput.addEventListener("keydown", (event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                translateSentence();
+            }
+        });
+    </script>
+</body>
+</html>
